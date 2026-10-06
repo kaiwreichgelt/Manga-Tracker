@@ -3,14 +3,32 @@ import math
 
 SAVE_FILE = "manga.json"
 
+MENU = """
+1) Add or update a manga
+2) List everything
+3) Remove a manga
+q) Quit"""
+
+
+class Quit(Exception):
+    # stdin is closed (Ctrl+D), so there's no point prompting again.
+    pass
+
+
+class Cancelled(Exception):
+    # Ctrl+C: abandon whichever action is running, but keep the session.
+    pass
+
 
 def prompt(message):
-    # Returns None if the user ends input (Ctrl+D) or interrupts (Ctrl+C).
     try:
         return input(message)
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
-        return None
+        raise Quit
+    except KeyboardInterrupt:
+        print()
+        raise Cancelled
 
 
 def load_manga():
@@ -36,12 +54,14 @@ def load_manga():
     return manga
 
 
+def save_manga(manga):
+    with open(SAVE_FILE, "w") as f:
+        json.dump(manga, f, indent=2, allow_nan=False)
+
+
 def get_title(manga):
     while True:
-        answer = prompt("Manga name: ")
-        if answer is None:
-            return None
-        name = answer.strip()
+        name = prompt("Manga name: ").strip()
         if not name:
             print("Please enter a manga name.")
             continue
@@ -55,11 +75,8 @@ def get_title(manga):
 def get_chapter():
     # Accepts normal chapters (24) and special chapters (24.5)
     while True:
-        answer = prompt("Chapter you're on: ")
-        if answer is None:
-            return None
         try:
-            chapter = float(answer)
+            chapter = float(prompt("Chapter you're on: "))
         except ValueError:
             print("Please enter a number, like 24 or 24.5.")
             continue
@@ -71,19 +88,69 @@ def get_chapter():
         return chapter
 
 
-manga = load_manga()
-title = get_title(manga)
-if title is None:
-    raise SystemExit(0)
-chapter = get_chapter()
-if chapter is None:
-    raise SystemExit(0)
-if title in manga:
-    print(f"Updating {title}: chapter {manga[title]} -> {chapter}")
-else:
-    print(f"Adding {title} at chapter {chapter}")
-manga[title] = chapter
-with open(SAVE_FILE, "w") as f:
-    json.dump(manga, f, indent=2, allow_nan=False)
-for name, progress in manga.items():
-    print(f"{name}: chapter {progress}")
+def add_or_update(manga):
+    title = get_title(manga)
+    chapter = get_chapter()
+    if title not in manga:
+        print(f"Adding {title} at chapter {chapter}")
+    elif manga[title] == chapter:
+        print(f"{title} is already at chapter {chapter}")
+        return
+    else:
+        print(f"Updating {title}: chapter {manga[title]} -> {chapter}")
+    manga[title] = chapter
+    save_manga(manga)
+
+
+def show_library(manga):
+    if not manga:
+        print("Nothing tracked yet.")
+        return
+    width = max(len(name) for name in manga)
+    for name, progress in sorted(manga.items(), key=lambda entry: entry[0].casefold()):
+        print(f"  {name:<{width}}  chapter {progress}")
+
+
+def remove_manga(manga):
+    if not manga:
+        print("Nothing tracked yet.")
+        return
+    title = get_title(manga)
+    if title not in manga:
+        print(f"{title} isn't being tracked.")
+        return
+    answer = prompt(f"Remove {title} at chapter {manga[title]}? [y/N] ")
+    if answer.strip().casefold() not in ("y", "yes"):
+        print(f"Kept {title}.")
+        return
+    del manga[title]
+    save_manga(manga)
+    print(f"Removed {title}.")
+
+
+def main():
+    manga = load_manga()
+    actions = {"1": add_or_update, "2": show_library, "3": remove_manga}
+    while True:
+        print(MENU)
+        try:
+            choice = prompt("> ").strip().casefold()
+        except Cancelled:
+            # Ctrl+C with no action running means the user wants out.
+            raise Quit
+        if choice in ("q", "quit"):
+            return
+        if choice not in actions:
+            print("Please pick 1, 2, 3, or q.")
+            continue
+        try:
+            actions[choice](manga)
+        except Cancelled:
+            print("Cancelled.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Quit:
+        pass
