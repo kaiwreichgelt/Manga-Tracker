@@ -153,33 +153,74 @@ def describe_progress(entry):
     return f"chapter {chapter} of {format_number(entry['total'])} ({share:.0%})"
 
 
+def find_matches(manga, query):
+    # An exact title wins outright, so "One Piece" never resolves to something
+    # longer that merely contains it. Otherwise any title containing the query
+    # counts, letting "fri" stand in for "Frieren".
+    query = query.strip().casefold()
+    if not query:
+        return []
+    exact = [name for name in manga if name.casefold() == query]
+    if exact:
+        return exact
+    return sorted((name for name in manga if query in name.casefold()), key=str.casefold)
+
+
+def parse_chapter_input(text, current=None):
+    # "+1" and "-2" step from where you are; anything else is an absolute
+    # chapter. Raises ValueError carrying a message meant for display.
+    text = text.strip()
+    if not text:
+        raise ValueError("Please enter a chapter.")
+    stepping = current is not None and text[0] in "+-"
+    try:
+        value = float(text)
+    except ValueError:
+        if stepping:
+            raise ValueError("Use +1 or -1 to step, or type a chapter number.")
+        raise ValueError("Please enter a number, like 24 or 24.5.")
+    if not math.isfinite(value):
+        raise ValueError("Please enter a chapter of 0 or more.")
+    chapter = current + value if stepping else value
+    if chapter < 0:
+        raise ValueError("Please enter a chapter of 0 or more.")
+    return int(chapter) if float(chapter).is_integer() else chapter
+
+
 def get_title(manga):
     while True:
         name = prompt("Manga name: ").strip()
         if not name:
             print("Please enter a manga name.")
             continue
-        # Match an existing entry regardless of case, so "frieren" updates "Frieren".
-        for existing in manga:
-            if existing.casefold() == name.casefold():
-                return existing
+        matches = find_matches(manga, name)
+        if len(matches) > 1:
+            print(f"  {len(matches)} matches: {', '.join(matches)}")
+            print("  Type more of the name to narrow it down.")
+            continue
+        if len(matches) == 1 and matches[0].casefold() != name.casefold():
+            # A partial match could also be a genuinely new title that happens
+            # to contain an existing one, so confirm before adopting it.
+            answer = prompt(f"Did you mean {matches[0]}? [Y/n] ").strip().casefold()
+            if answer in ("n", "no"):
+                return name
+            return matches[0]
+        if matches:
+            return matches[0]
         return name
 
 
-def get_chapter():
-    # Accepts normal chapters (24) and special chapters (24.5)
+def get_chapter(current=None):
+    # Accepts whole chapters (24), specials (24.5), and +1/-1 to step.
+    if current is None:
+        message = "Chapter you're on: "
+    else:
+        message = f"Chapter you're on [{format_number(current)}, or +1]: "
     while True:
         try:
-            chapter = float(prompt("Chapter you're on: "))
-        except ValueError:
-            print("Please enter a number, like 24 or 24.5.")
-            continue
-        if not math.isfinite(chapter) or chapter < 0:
-            print("Please enter a chapter of 0 or more.")
-            continue
-        if chapter.is_integer():
-            return int(chapter)
-        return chapter
+            return parse_chapter_input(prompt(message), current)
+        except ValueError as problem:
+            print(problem)
 
 
 def get_total(chapter, current):
@@ -211,8 +252,8 @@ def get_total(chapter, current):
 
 def add_or_update(manga):
     title = get_title(manga)
-    chapter = get_chapter()
     entry = manga.get(title)
+    chapter = get_chapter(entry["chapter"] if entry else None)
     total = get_total(chapter, entry["total"] if entry else None)
     if entry is None:
         print(f"Adding {title} at chapter {format_number(chapter)}")
